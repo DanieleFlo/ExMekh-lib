@@ -261,7 +261,7 @@ class NodeRuntime(ProviderEventHandler):
         if not requested and not oversized:
             return request
         try:
-            self._compact_history()
+            self._compact_history(request)
         except Exception as error:
             # Sending the unmodified request after the policy asked to compact
             # can exhaust the context before there is another safe boundary.
@@ -274,14 +274,8 @@ class NodeRuntime(ProviderEventHandler):
         )
         for message in steering:
             self._client.add_user_message(message)
-        compacted_request = ProviderRequest(
-            messages=self._client.get_history(),
-            tools=request.get_tools(),
-            tool_choice=request.get_tool_choice(),
-            extra=self._executor.build_agentic_extra(),
-            stream=request.get_streaming(),
-            on_event=request.on_event,
-            reasoning_effort_override=request.get_reasoning_effort_override(),
+        compacted_request = self._request_with_history(
+            request, self._client.get_history()
         )
         compacted_request.notify_steering_added(steering)
         policy.after_compaction(compacted_request)
@@ -289,11 +283,17 @@ class NodeRuntime(ProviderEventHandler):
             budget.require_fits(compacted_request)
         return compacted_request
 
+    def _request_with_history(
+        self, request: ProviderRequest, history: list[Message[object]]
+    ) -> ProviderRequest:
+        extra = {**(request.get_extra() or {}), **self._executor.build_agentic_extra()}
+        return request.with_messages(history).with_extra(extra)
+
     def _compact_pending_history(self) -> None:
         if self._turn_control.take_compaction_request():
             self._compact_history()
 
-    def _compact_history(self) -> None:
+    def _compact_history(self, request: ProviderRequest | None = None) -> None:
         original = self._client.get_history()
         records = {record.id: record for record in self._get_tool_cache().get_all()}
         records.update(
@@ -327,7 +327,20 @@ class NodeRuntime(ProviderEventHandler):
         )
         if self._client.get_history() != original:
             raise RuntimeError(HISTORY_COMPACTION.changed_history)
-        self._client.replace_history_from(0, result.replacement_for(original))
+        replacement = result.replacement_for(original)
+        budget = self._compaction_budget
+        if request is not None and budget is not None:
+            candidate = self._request_with_history(request, replacement)
+            # Short retained outputs can grow when wrapped in a synthetic batch.
+            # Commit only a smaller request that fits, keeping originals and
+            # scope anchors available when compaction cannot satisfy the budget.
+            candidate_tokens = budget.count_tokens(candidate)
+            if (
+                candidate_tokens > budget.prompt_limit
+                or candidate_tokens >= budget.count_tokens(request)
+            ):
+                return
+        self._client.replace_history_from(0, replacement)
         self._executor.rebase_active_history(result.index_map)
         if result.replaced_history:
             snapshot = self._executor.snapshot()

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from exmekh_lib.config.interface_text import INTERFACE_TEXT
 from exmekh_lib.interfaces.message import Message
+from exmekh_lib.interfaces.operation_progress import OperationProgress
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,11 +18,13 @@ class ToolContext:
     work_root: Path
     history: tuple[Message[object], ...]
     call_id: str = ""
+    on_progress: Callable[[OperationProgress], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ToolArguments:
     arguments: dict[str, Any]
+    on_progress: Callable[[OperationProgress], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)

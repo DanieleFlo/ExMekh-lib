@@ -45,11 +45,15 @@ class ProviderRequest:
         self._messages = self._include_tool_attachments(messages)
         self._extra = dict(extra) if extra is not None else None
 
-    def _check_provider_inputs(self) -> None:
-        if not isinstance(self._messages, list) or not self._messages:
+    @staticmethod
+    def _check_messages(messages: list[Message[object]]) -> None:
+        if not isinstance(messages, list) or not messages:
             raise ValueError(MODEL_TEXT.expected_a_non_empty_list_of_messages)
-        if not all(isinstance(message, Message) for message in self._messages):
+        if not all(isinstance(message, Message) for message in messages):
             raise TypeError(MODEL_TEXT.all_messages_must_be_message_instances)
+
+    def _check_provider_inputs(self) -> None:
+        self._check_messages(self._messages)
         if self._extra is not None and not isinstance(self._extra, Mapping):
             raise TypeError(MODEL_TEXT.extra_provider_data_must_be_a_mapping)
         if self._tool_choice is not None and not isinstance(self._tool_choice, str):
@@ -107,6 +111,13 @@ class ProviderRequest:
             ProviderEventHandler.validate_instance(handler)
         adapted = copy(self)
         adapted.on_event = handler
+        return adapted
+
+    def with_messages(self, messages: list[Message[object]]) -> Self:
+        """Replace raw history and expand its tool attachments once."""
+        self._check_messages(messages)
+        adapted = copy(self)
+        adapted._messages = self._include_tool_attachments(messages)
         return adapted
 
     def with_system_message(self, content: str) -> Self:

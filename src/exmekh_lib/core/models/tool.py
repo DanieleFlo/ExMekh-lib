@@ -23,6 +23,7 @@ from exmekh_lib.core.models.interactive import (
 from exmekh_lib.core.models.tool_hooks import ToolHooks
 from exmekh_lib.core.models.user_message import UserMessage
 from exmekh_lib.interfaces.message import Message
+from exmekh_lib.interfaces.operation_progress import operation_progress_context
 from exmekh_lib.interfaces.tool_hook import (
     AfterTool,
     BeforeTool,
@@ -279,7 +280,11 @@ class Tool:
         context = ToolContext(deepcopy(dict(arguments)), work_root, history, call_id)
         decision = self.before.handle(context) if self.before is not None else None
         if isinstance(decision, ToolArguments):
-            context = replace(context, arguments=deepcopy(dict(decision.arguments)))
+            context = replace(
+                context,
+                arguments=deepcopy(dict(decision.arguments)),
+                on_progress=decision.on_progress,
+            )
             return context, None
         if decision is not None and not isinstance(decision, ToolResponse):
             raise TypeError(
@@ -341,7 +346,8 @@ class Tool:
                 # AfterTool filters complete results; raw progress must not bypass it.
                 if self.after is None:
                     operation.read_partial = work.read_partial
-                result = work.run()
+                with operation_progress_context(context.on_progress):
+                    result = work.run()
             return self._finalize_result(context, result)
 
         operation = ToolExecutionOperation(run)

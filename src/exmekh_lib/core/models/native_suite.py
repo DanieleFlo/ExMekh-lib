@@ -14,12 +14,15 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-from openai import OpenAI
+from httpx2 import Request as HTTPRequest
+from httpx2 import Response as HTTPResponse
+from openai import APIStatusError, OpenAI, Stream
 from PIL import Image
 from pydantic import BaseModel, Field
 
 from exmekh_lib.config.native_suite import NATIVE_SUITE, ImageCount, ImageDimension
 from exmekh_lib.config.provider import DEFAULT_PROVIDER_SETTINGS
+from exmekh_lib.interfaces.operation_progress import OperationProgress
 
 
 class TextContent(BaseModel):
@@ -90,25 +93,29 @@ class NativeCapabilities(BaseModel):
     configured: bool
     resident: bool
     ready: bool
+    image_progress_version: Literal[1] | None = None
 
 
 class NativeModel(BaseModel):
-    id: Literal["Qwen/Qwen-Image-2.1-Turbo", "google/embeddinggemma-2"]
+    id: str
     ds4: NativeCapabilities
 
 
 class NativeSuiteClient:
     """No residency operations: each method waits for restored service state."""
 
-    def __init__(self, client: OpenAI) -> None:
+    def __init__(
+        self, client: OpenAI, *, image_model: str = NATIVE_SUITE.image_model
+    ) -> None:
         self._transport = client
+        self._image_model = image_model
 
     def models(self) -> list[NativeModel]:
         data = self._transport.get("/models", cast_to=dict[str, Any])["data"]
         return [
             NativeModel.model_validate(item)
             for item in data
-            if item["id"] in (NATIVE_SUITE.image_model, NATIVE_SUITE.embedding_model)
+            if item["id"] in (self._image_model, NATIVE_SUITE.embedding_model)
         ]
 
     def upload(
@@ -212,6 +219,7 @@ class NativeSuiteClient:
         background: Literal["auto", "opaque", "transparent"] = "auto",
         seed: int | None = None,
         idempotency_key: str | None = None,
+        on_progress: Callable[[OperationProgress], None] | None = None,
     ) -> ImageBatch:
         self.validate_image_options(
             n=n,
@@ -225,7 +233,7 @@ class NativeSuiteClient:
         if seed is not None:
             extension["seed"] = seed
         body: dict[str, Any] = {
-            "model": NATIVE_SUITE.image_model,
+            "model": self._image_model,
             "prompt": prompt,
             "n": n,
             "size": f"{width}x{height}",
@@ -235,17 +243,93 @@ class NativeSuiteClient:
         }
         if images:
             body["images"] = [item.file_id for item in images]
-        response = self._transport.post(
-            "/images/edits" if images else "/images/generations",
-            cast_to=dict[str, Any],
-            body=body,
-            options={
-                "headers": {"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
-            },
-        )
+        path = "/images/edits" if images else "/images/generations"
+        headers = {"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
+        # Image calls can have effects before a transport failure. Recovery
+        # must be explicit; 409 cancellation and 503 resource errors are final.
+        transport = self._transport.with_options(max_retries=0)
+        completion = None
+        if on_progress is None:
+            response = transport.post(
+                path, cast_to=dict[str, Any], body=body, options={"headers": headers}
+            )
+        else:
+            headers["Accept"] = "text/event-stream"
+            with transport.post(
+                path,
+                cast_to=dict[str, Any],
+                body=body,
+                options={"headers": headers},
+                stream=True,
+                stream_cls=Stream[dict[str, Any]],
+            ) as events:
+                content_type = events.response.headers.get("content-type", "")
+                if (
+                    content_type.partition(";")[0].strip().lower()
+                    == "text/event-stream"
+                ):
+                    response, completion = self._image_events(events, on_progress)
+                else:
+                    # An older server can return ordinary JSON to negotiation.
+                    events.response.read()
+                    response = events.response.json()
         batch = ImageBatch.model_validate(response)
         batch.validate_geometry(n=n, width=width, height=height)
+        if completion is not None and on_progress is not None:
+            on_progress(completion)
         return batch
+
+    @staticmethod
+    def _image_events(
+        events: Stream[dict[str, Any]],
+        callback: Callable[[OperationProgress], None],
+    ) -> tuple[dict[str, Any], OperationProgress]:
+        previous = None
+        for payload in events:
+            event = OperationProgress.model_validate(payload)
+            if not event.follows(previous):
+                raise ValueError(NATIVE_SUITE.invalid_response)
+            if event.state == "completed":
+                result = payload.get("result")
+                if not isinstance(result, dict):
+                    raise ValueError(NATIVE_SUITE.invalid_response)
+                return result, event
+            if event.state != "running":
+                failure = NativeSuiteClient._image_stream_error(
+                    events.response.request, event.request_id, payload
+                )
+                callback(event)
+                raise failure
+            callback(event)
+            previous = event
+        raise ValueError(NATIVE_SUITE.incomplete_stream)
+
+    @staticmethod
+    def _image_stream_error(
+        request: HTTPRequest, request_id: str, payload: dict[str, Any]
+    ) -> APIStatusError:
+        failure = payload.get("failure")
+        code = payload.get("status_code")
+        if (
+            not isinstance(code, int)
+            or not 400 <= code <= 599
+            or not isinstance(failure, dict)
+        ):
+            raise ValueError(NATIVE_SUITE.invalid_response)
+        detail = failure.get("error")
+        message = detail.get("message") if isinstance(detail, dict) else None
+        return APIStatusError(
+            message
+            if isinstance(message, str) and message
+            else NATIVE_SUITE.operation_failed,
+            response=HTTPResponse(
+                code,
+                request=request,
+                headers={"x-request-id": request_id},
+                json=failure,
+            ),
+            body=failure,
+        )
 
 
 _suite_factory: ContextVar[Callable[[], NativeSuiteClient] | None] = ContextVar(

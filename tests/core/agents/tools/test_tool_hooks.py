@@ -19,6 +19,7 @@ from exmekh_lib.core.models.assistant_message import (
 from exmekh_lib.core.models.tool import CalledTool, Tool, ToolExecutionOperation
 from exmekh_lib.core.models.tool_message import ToolMessage
 from exmekh_lib.core.models.user_message import UserMessage
+from exmekh_lib.interfaces.operation_progress import operation_progress_observer
 from exmekh_lib.interfaces.tool_hook import (
     AfterTool,
     BeforeTool,
@@ -36,6 +37,30 @@ class ChangeArguments(BeforeTool):
         assert isinstance(message, UserMessage)
         assert message.get_message() == "call it"
         return ToolArguments({"value": "changed"})
+
+
+def test_progress_callback_is_runtime_context_and_never_a_tool_argument(tmp_path):
+    seen = []
+
+    class Observe(BeforeTool):
+        def handle(self, context):
+            return ToolArguments(context.arguments, on_progress=seen.append)
+
+    @deep_tool(description="Test", before=Observe(), background_enabled=False)
+    def entrypoint(work_root: Path, value: str) -> str:
+        callback = operation_progress_observer()
+        assert callback is not None
+        callback(value)
+        return value
+
+    tool = DeepTool(entrypoint, tmp_path)
+    assert "on_progress" not in tool.get_signature().parameters
+    assert (
+        tool.execute_with_hooks({"value": "progress"}, work_root=tmp_path, history=())
+        == "progress"
+    )
+    assert seen == ["progress"]
+    assert operation_progress_observer() is None
 
 
 class ChangeResult(AfterTool):

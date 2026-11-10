@@ -42,8 +42,9 @@ class ProviderWithUsage(CompactionProvider):
 def test_actual_compaction_keeps_all_internal_calls_in_the_ledger(tmp_path, limits):
     provider = ProviderWithUsage(
         [
-            call("deep-thinking", {}),
-            call("calculate", {"operation": "evaluate", "expression": "19+23"}),
+            call("file-processing", {}),
+            call("run-python", {"path": "answer.py"}),
+            call("exit_agent", {"text": "42", "items": []}),
             AssistantMessage("42"),
         ],
         score=30,
@@ -52,7 +53,9 @@ def test_actual_compaction_keeps_all_internal_calls_in_the_ledger(tmp_path, limi
     task = Task(
         id="compact",
         domain="runtime",
-        prompt="Compute 19+23",
+        prompt="Run answer.py and return its answer.",
+        # The tool output must exceed the overhead of the compacted batch.
+        files={"answer.py": "print('intermediate detail ' * 100)\nprint(19 + 23)\n"},
         limits=limits,
         criteria=(
             Criterion(

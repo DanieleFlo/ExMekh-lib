@@ -273,17 +273,54 @@ def test_oversized_protected_input_stops_before_any_inference(make_agent):
     )
 
 
-def test_compacted_result_is_checked_before_the_next_inference(make_agent):
+@pytest.mark.parametrize(
+    "score,summary", [(100, "unused"), (30, "large summary " * 1000)]
+)
+def test_larger_automatic_compaction_preserves_fitting_history(
+    make_agent, score, summary
+):
+    provider = CompactionProvider(
+        [tool_reply(call()), AssistantMessage("done")], score=score, summary=summary
+    )
+    events = []
+    agent = make_agent(
+        provider,
+        Tool(lambda: "original body", name="mock-tool"),
+        on_stream=as_agent_handler(events.append),
+    )
+    budget = RequestBudget(8000, count_request)
+    policy = automatic_policy()
+    provider.on_call = budget.require_fits
+    agent.root_node.set_history_compaction_policy(policy, budget=budget)
+    assert agent.run("task").get_message() == "done"
+    assert len(provider.requests) == 2
+    assert len(provider.score_requests) == 1
+    assert provider.requests[-1].get_messages()[-1].get_name() == "mock-tool"
+    assert "original body" in provider.requests[-1].get_messages()[-1].get_message()
+    assert not any(
+        isinstance(event, DeepAgentHistoryCompactionEvent) for event in events
+    )
+    policy.after_compaction.assert_called_once_with(provider.requests[-1])
+    assert agent.root_node.read_tool_output("output-0").content.endswith(
+        "original body"
+    )
+
+
+@pytest.mark.parametrize("summary", ["large summary " * 1000, "summary\n" * 300])
+def test_unusable_compaction_preserves_oversized_originals(make_agent, summary):
+    body = "evidence line\n" * 300
     provider = CompactionProvider(
         [tool_reply(call()), AssistantMessage("must not run")],
         score=30,
-        summary="large summary " * 1000,
+        summary=summary,
     )
-    agent = make_agent(provider, Tool(lambda: "original body", name="mock-tool"))
-    agent.root_node.set_history_compaction_policy(
-        automatic_policy(), budget=RequestBudget(8000, count_request)
-    )
+    agent = make_agent(provider, Tool(lambda: body, name="mock-tool"))
+    budget = RequestBudget(11000, count_request)
+    provider.on_call = budget.require_fits
+    provider.on_score = budget.require_fits
+    agent.root_node.set_history_compaction_policy(automatic_policy(), budget=budget)
     with pytest.raises(ContextBudgetExceededError):
-        agent.run("task")
+        agent.run("user constraint " * 220)
     assert len(provider.requests) == len(provider.score_requests) == 1
-    assert "compact_history" in str([m.message_dump() for m in runtime_history(agent)])
+    assert runtime_history(agent)[-1].get_name() == "mock-tool"
+    assert agent.root_node.read_tool_output("output-0").content.endswith(body)

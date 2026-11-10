@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -174,6 +175,14 @@ def _xml_body(content: str) -> dict[str, object]:
 def test_full_skill_uses_every_tool_with_a_mock_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The browser is mocked; URL validation must not depend on external DNS.
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
     search_web = MagicMock(
         return_value={
             "result_count": 1,

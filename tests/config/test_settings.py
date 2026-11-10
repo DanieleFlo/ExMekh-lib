@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from exmekh_lib.config.cli import CliSettings
+from exmekh_lib.config.file_editing import FileEditingSettings
 from exmekh_lib.config.provider import DEFAULT_PROVIDER_SETTINGS, ProviderSettings
 from exmekh_lib.config.runtime import RUNTIME
 from exmekh_lib.config.storage import StorageSettings
@@ -24,6 +25,26 @@ class StubTokenizer(SequentialTokenizer):
 
     def truncate_text(self, text: str, start_tokens: int, end_tokens: int = 0) -> str:
         return text[:start_tokens] + (text[-end_tokens:] if end_tokens else "")
+
+
+def test_interactive_timeout_defaults_to_300_seconds(monkeypatch):
+    monkeypatch.delenv("EXMEKH_INTERACTIVE_TIMEOUT_SECONDS", raising=False)
+    assert FileEditingSettings.from_environment().protocol_timeout_seconds == 300
+
+
+@pytest.mark.parametrize("value", ["600", "1200", "0.5"])
+def test_interactive_timeout_can_be_configured(monkeypatch, value):
+    monkeypatch.setenv("EXMEKH_INTERACTIVE_TIMEOUT_SECONDS", value)
+    assert FileEditingSettings.from_environment().protocol_timeout_seconds == float(
+        value
+    )
+
+
+@pytest.mark.parametrize("value", ["", "invalid", "0", "-1", "nan", "inf", "-inf"])
+def test_interactive_timeout_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("EXMEKH_INTERACTIVE_TIMEOUT_SECONDS", value)
+    with pytest.raises(ValueError, match="must be finite and positive"):
+        FileEditingSettings.from_environment()
 
 
 def test_provider_settings_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:

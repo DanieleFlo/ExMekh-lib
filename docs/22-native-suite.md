@@ -1,5 +1,28 @@
 # Native DS4 images and embeddings
 
+## Operation progress
+
+`NativeSuiteClient.images(..., on_progress=callback)` explicitly negotiates
+versioned SSE with `Accept: text/event-stream`. Ordinary JSON responses remain
+compatible. Discovery advertises `ds4.image_progress_version=1`; callers must
+not infer streaming support from a model name or compute backend. Events use
+the common `OperationProgress` interface for CPU, Metal, CUDA and future
+backends/models. Units can be evaluations, tokens, tiles or other work; totals
+and overall fractions can be unknown. The optional `active_items` field counts
+the outputs advancing together from `item_index`. It defaults to one. Call
+`snapshot.item_fraction(index)` to resolve work for an individual output.
+A callback observes metadata and cannot
+alter tensors or numerical execution. `NativeSuiteClient(..., image_model=...)`
+can select another configured image model without changing the progress API.
+
+The registered image tool inherits the callback through `ToolArguments.on_progress`
+and the execution context; no progress argument is exposed to the LLM. The
+client verifies event sequence, operation and request identity, rejects streams without
+a terminal result, preserves structured failures and disables automatic image
+retries. Heartbeats keep a read timeout active but do not extend a server's
+absolute deadline. Final results are verified and saved before UI completion;
+subsequent LLM inference is independent of image success.
+
 `Client.native_suite()` exposes the configured native DS4 service on the same
 OpenAI transport, URL and credentials as `LocalProvider`. No client residency,
 checkpoint or load/unload operations are needed. Providers without this
@@ -23,9 +46,10 @@ with LocalProvider(model="Qwen3.8-27B-UD-Q4_K_S", base_url="http://localhost:180
     Path("result.png").write_bytes(suite.content(result.data[0].ds4.file_id))
 ```
 
-The only implemented identities are `Literal["Qwen/Qwen-Image-2.1-Turbo"]`
-and `Literal["google/embeddinggemma-2"]`. Each operation has one available
-model, so methods and tools expose no model selector. Image dimensions are
+The current DS4 service provides `Qwen/Qwen-Image-2.1-Turbo` for images
+and `google/embeddinggemma-2` for embeddings. The registered tools use these
+defaults. The typed client can discover a different configured image model
+through its constructor. Image dimensions are
 independent `ImageDimension` Literals for `width` and `height`, enumerating
 every multiple of 32 from 32 to 2048; serialization to the standard `size` field stays
 inside the transport adapter. `models()` returns typed native catalog entries;
@@ -55,8 +79,8 @@ alignment and 2560×1440 exceeds the current DS4 per-axis limit. These are
 service limits, not architectural maxima of the Qwen checkpoint: its model
 card also lists larger presets such as 2752×1536, outside this service contract.
 Unknown options are
-rejected. An automatic per-call idempotency key protects transport retries;
-pass a stable key yourself when retrying the same logical call later.
+rejected. Every call carries an idempotency key. Pass a stable key when
+explicitly replaying the same logical call later.
 References preserve their supplied dimensions (`reference_resolution=0`) and
 must already satisfy the native Qwen3-VL geometry plan, such as 256×256.
 References requiring an implicit resize are rejected before compute.

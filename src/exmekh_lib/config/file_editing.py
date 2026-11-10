@@ -1,5 +1,9 @@
 """Shared literal edit contract and bounded filesystem operations."""
 
+from __future__ import annotations
+
+import math
+import os
 from dataclasses import dataclass
 
 from exmekh_lib.config.default_capabilities import DEFAULT_CAPABILITIES
@@ -184,8 +188,22 @@ class FileEditingSettings:
             "Directory bodies are ignored with warnings."
         )
 
+    @classmethod
+    def from_environment(cls) -> FileEditingSettings:
+        value = os.getenv("EXMEKH_INTERACTIVE_TIMEOUT_SECONDS")
+        if value is None:
+            return cls()
+        error_text = "EXMEKH_INTERACTIVE_TIMEOUT_SECONDS must be finite and positive"
+        try:
+            timeout = float(value)
+        except ValueError as error:
+            raise ValueError(error_text) from error
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(error_text)
+        return cls(protocol_timeout_seconds=timeout)
 
-FILE_EDITING = FileEditingSettings()
+
+FILE_EDITING = FileEditingSettings.from_environment()
 
 
 @dataclass(frozen=True, slots=True)

@@ -189,7 +189,8 @@ def test_request_adapters_preserve_expanded_attachments_and_contracts(structured
     )
     request.interactive_handler = Mock()
     adapted = (
-        request.with_system_message("new")
+        request.with_messages(messages)
+        .with_system_message("new")
         .with_extra({"max_output_tokens": 10})
         .with_streaming(True)
     )

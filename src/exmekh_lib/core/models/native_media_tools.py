@@ -17,6 +17,7 @@ from exmekh_lib.core.models.native_suite import (
 )
 from exmekh_lib.core.models.tool import AttachedToolResult
 from exmekh_lib.core.models.user_message import ImagesUserMessage, UserMessage
+from exmekh_lib.interfaces.operation_progress import operation_progress_observer
 
 
 def workspace_media(work_root: Path, path: str) -> Path:
@@ -69,6 +70,7 @@ def generate_images(
             background=background,
             seed=seed,
             idempotency_key=idempotency_key,
+            on_progress=operation_progress_observer(),
         )
     return _save_images(response, directory, include_image_in_result, preview_scale)
 
