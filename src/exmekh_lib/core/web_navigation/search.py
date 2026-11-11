@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from itertools import zip_longest
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -138,24 +140,45 @@ def _validate_search_arguments(
 def _retrieve_candidates(
     normalized_query: str, *, timeout_seconds: int
 ) -> list[dict[str, object]]:
-    """Retrieve, normalize, and deduplicate the complete DDGS candidate pool."""
+    """Collect each provider independently so one failure cannot discard other results."""
+    backends = SEARCH_BACKENDS.split(",")
 
-    try:
-        raw_results = DDGS(timeout=timeout_seconds).text(
+    def fetch(backend: str) -> list[dict[str, object]]:
+        return DDGS(timeout=timeout_seconds).text(
             normalized_query,
             max_results=SEARCH_CANDIDATE_LIMIT,
-            backend=SEARCH_BACKENDS,
+            backend=backend,
         )
-    except (DDGSException, OSError, TimeoutError) as error:
+
+    provider_results: list[list[dict[str, object]]] = []
+    last_failure: Exception | None = None
+    with ThreadPoolExecutor(max_workers=len(backends)) as executor:
+        futures = [executor.submit(fetch, backend) for backend in backends]
+        for future in futures:
+            try:
+                raw_results = future.result()
+            except (DDGSException, OSError) as error:
+                last_failure = error
+                continue
+            provider_results.append(
+                [
+                    normalized
+                    for item in raw_results or []
+                    if (normalized := _normalize_result(item)) is not None
+                ]
+            )
+
+    if not provider_results:
         raise WebNavigationError(
             WEB_TEXT.public_web_search_failed_across_the_available_providers,
             kind="search_failed",
-        ) from error
+        ) from last_failure
 
     normalized_results = [
-        normalized
-        for item in raw_results or []
-        if (normalized := _normalize_result(item)) is not None
+        item
+        for row in zip_longest(*provider_results)
+        for item in row
+        if item is not None
     ]
     return _deduplicate_results(
         normalized_results,

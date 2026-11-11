@@ -40,7 +40,7 @@ def test_search_normalizes_tracking_links_and_deduplicates_provider_results(
         ) -> list[dict[str, str]]:
             assert query == "research topic"
             assert max_results == search.SEARCH_CANDIDATE_LIMIT
-            assert "wikipedia" in backend
+            assert backend in search.SEARCH_BACKENDS.split(",")
             return [
                 {
                     "title": "First",
@@ -76,6 +76,38 @@ def test_search_normalizes_tracking_links_and_deduplicates_provider_results(
     }
 
 
+def test_provider_failure_preserves_results_from_other_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MixedDDGS:
+        def __init__(self, *, timeout: int) -> None:
+            assert timeout == 4
+
+        def text(
+            self, query: str, *, max_results: int, backend: str
+        ) -> list[dict[str, str]]:
+            if backend == "brave":
+                raise search.DDGSException("provider failed")
+            assert backend == "wikipedia"
+            return [
+                {
+                    "title": "Public reference",
+                    "href": "https://example.org/reference",
+                    "body": "A relevant result",
+                }
+            ]
+
+    monkeypatch.setattr(search, "SEARCH_BACKENDS", "brave,wikipedia")
+    monkeypatch.setattr(search, "DDGS", MixedDDGS)
+    assert search._retrieve_candidates("research topic", timeout_seconds=4) == [
+        {
+            "title": "Public reference",
+            "url": "https://example.org/reference",
+            "snippet": "A relevant result",
+        }
+    ]
+
+
 def test_provider_failure_becomes_stable_search_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -91,6 +123,33 @@ def test_provider_failure_becomes_stable_search_error(
     with pytest.raises(WebNavigationError) as failure:
         search._retrieve_candidates("topic", timeout_seconds=1)
     assert failure.value.kind == "search_failed"
+    assert isinstance(failure.value.__cause__, TimeoutError)
+
+
+def test_candidates_interleave_providers_in_configured_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeDDGS:
+        def __init__(self, *, timeout: int) -> None:
+            pass
+
+        def text(
+            self, query: str, *, max_results: int, backend: str
+        ) -> list[dict[str, str]]:
+            return [
+                {"title": name, "href": f"https://example.org/{name}"}
+                for name in {"brave": ["first", "third"], "wikipedia": ["second"]}[
+                    backend
+                ]
+            ]
+
+    monkeypatch.setattr(search, "SEARCH_BACKENDS", "brave,wikipedia")
+    monkeypatch.setattr(search, "SEARCH_CANDIDATE_LIMIT", 2)
+    monkeypatch.setattr(search, "DDGS", FakeDDGS)
+    assert [
+        candidate["title"]
+        for candidate in search._retrieve_candidates("topic", timeout_seconds=1)
+    ] == ["first", "second"]
 
 
 @pytest.mark.parametrize(
