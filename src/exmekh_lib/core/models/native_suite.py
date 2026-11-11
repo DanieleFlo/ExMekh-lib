@@ -17,12 +17,14 @@ from typing import Any, Literal, get_args
 from httpx2 import Request as HTTPRequest
 from httpx2 import Response as HTTPResponse
 from openai import APIStatusError, OpenAI, Stream
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from exmekh_lib.config.native_suite import NATIVE_SUITE, ImageCount, ImageDimension
 from exmekh_lib.config.provider import DEFAULT_PROVIDER_SETTINGS
 from exmekh_lib.interfaces.operation_progress import OperationProgress
+
+_IMAGE_UPLOAD_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
 class TextContent(BaseModel):
@@ -125,6 +127,15 @@ class NativeSuiteClient:
         mime = {"audio/x-wav": "audio/wav", "audio/x-flac": "audio/flac"}.get(
             mime, mime
         )
+        if kind == "image" and mime not in _IMAGE_UPLOAD_MIME_TYPES:
+            # The suite accepts PNG, JPEG and WebP. Decode other raster inputs
+            # once and reuse the normal PNG upload path.
+            with Image.open(path) as source:
+                image = ImageOps.exif_transpose(source)
+                mode = "RGBA" if image.has_transparency_data else "RGB"
+                return self.upload_image(
+                    image.convert(mode), filename=path.with_suffix(".png").name
+                )
         with path.open("rb") as source:
             response = self._transport.files.create(
                 file=(path.name, source, mime),
@@ -132,11 +143,13 @@ class NativeSuiteClient:
             )
         return MediaContent(type=kind, file_id=response.id)
 
-    def upload_image(self, image: Image.Image) -> MediaContent:
+    def upload_image(
+        self, image: Image.Image, *, filename: str = "image.png"
+    ) -> MediaContent:
         stream = io.BytesIO()
         image.save(stream, format="PNG")
         response = self._transport.files.create(
-            file=("image.png", stream.getvalue(), "image/png"),
+            file=(filename, stream.getvalue(), "image/png"),
             purpose="ds4_media",  # type: ignore[arg-type]
         )
         return MediaContent(type="image", file_id=response.id)

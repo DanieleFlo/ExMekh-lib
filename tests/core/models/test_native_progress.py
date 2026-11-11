@@ -187,6 +187,9 @@ def test_failure_inside_stream_preserves_cause_and_never_retries(code):
         frame(event("completed", state="running", result=batch())),
         frame(event("completed", state="completed")),
         frame(event("completed", state="completed", result={**batch(), "data": []})),
+        frame(event("failed", state="failed", failure={})),
+        frame(event("failed", state="failed", status_code=200, failure={})),
+        frame(event("failed", state="failed", status_code=503, failure="bad payload")),
     ],
 )
 def test_incomplete_or_invalid_stream_does_not_report_success(payload):

@@ -158,6 +158,11 @@ public entry point: configuration contains settings and messages only. Options
 are checked before reference uploads, including batch geometry, PNG output,
 background and uint64 seed room for every generated image.
 
+`NativeSuiteClient.upload(path, kind="image")` sends PNG, JPEG and WebP
+directly. Other raster formats supported by Pillow are decoded to PNG for
+upload. For animated inputs this uses the first frame. The source file is
+preserved.
+
 `ImageBatch.validate_geometry()` checks the returned count and dimensions
 against the request. `GeneratedImage.png_bytes()` owns base64 decoding and PNG
 verification, including declared dimensions. Workspace persistence uses this

@@ -102,7 +102,9 @@ class NativeSuiteSettings:
     )
     unsupported_provider: str = "This provider does not expose the native suite."
     invalid_response: str = "The native service returned an invalid response."
-    incomplete_stream: str = "The native progress stream ended without a terminal result."
+    incomplete_stream: str = (
+        "The native progress stream ended without a terminal result."
+    )
     operation_failed: str = "The native image operation failed; inspect its structured cause before retrying."
     invalid_scale: str = "preview_scale must be greater than zero and at most one."
     invalid_path: str = "Media paths must stay inside the workspace."

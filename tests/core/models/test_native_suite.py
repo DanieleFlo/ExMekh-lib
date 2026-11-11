@@ -219,6 +219,22 @@ def test_upload_uses_native_file_purpose_and_returns_reference(tmp_path):
     assert media.type == "audio" and media.file_id == "file-audio"
 
 
+@pytest.mark.parametrize("suffix", ["gif", "tiff", "bmp"])
+def test_upload_converts_unsupported_raster_formats_to_png(tmp_path, suffix):
+    path = tmp_path / f"reference.{suffix}"
+    Image.new("RGB", (32, 24), "red").save(path)
+
+    def handler(request):
+        assert request.url.path == "/v1/files"
+        assert b'filename="reference.png"' in request.content
+        assert b"Content-Type: image/png" in request.content
+        assert b"\x89PNG" in request.content
+        return httpx2.Response(200, json={"id": "file-image"})
+
+    media = transport(handler).upload(path, kind="image")
+    assert media.type == "image" and media.file_id == "file-image"
+
+
 def test_invalid_embedding_shape_is_rejected():
     suite = transport(lambda r: httpx2.Response(200, json={"data": []}))
     with pytest.raises(ValueError):
