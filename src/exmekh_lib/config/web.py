@@ -15,7 +15,7 @@ class WebNavigationSettings:
     default_search_results: int = 5
     max_search_results: int = 10
     search_candidate_limit: int = 50
-    search_backends: str = "duckduckgo,brave,mojeek,startpage,wikipedia,yahoo"
+    search_backends: str = "duckduckgo,yahoo,bing,brave,mojeek,startpage,wikipedia"
     max_main_frame_navigations: int = 5
     max_markdown_chars: int = 24_000
     cache_ttl_seconds: int = 900
