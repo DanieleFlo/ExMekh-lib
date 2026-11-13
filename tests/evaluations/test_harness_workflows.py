@@ -223,6 +223,12 @@ def test_variants_preserve_cases_schema_contracts_and_use_real_skill_instruction
         tool["name"]: without_schema_descriptions(tool["parameters"])
         for tool in current.tools
     }
+    # The frozen prompt snapshot predates explicit text read-plan pagination.
+    inspection = new["inspect-file"]
+    assert inspection["properties"].pop("read_from_line") == {
+        "anyOf": [{"type": "integer"}, {"type": "null"}]
+    }
+    inspection["required"].remove("read_from_line")
     assert old == new
     settings = WorkflowSettings("model", tmp_path / "report.xml", tuple(CASES))
     for case in build_cases():

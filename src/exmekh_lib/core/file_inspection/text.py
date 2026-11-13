@@ -11,7 +11,13 @@ from .decoding import decode_text
 from .lines import physical_lines
 from .models import Analysis, RegionIndex
 from .navigation import markdown_navigation, python_navigation
-from .structured import analyze_mapping, analyze_table, analyze_toml, analyze_xml
+from .structured import (
+    analyze_json_lines,
+    analyze_mapping,
+    analyze_table,
+    analyze_xml,
+)
+from .syntax_navigation import analyze_syntax
 
 
 def analyze_text(raw: bytes, extension: str, index: RegionIndex) -> Analysis:
@@ -31,6 +37,8 @@ def analyze_text(raw: bytes, extension: str, index: RegionIndex) -> Analysis:
         ".md": "markdown",
         ".markdown": "markdown",
         ".json": "json",
+        ".jsonl": "jsonl",
+        ".ndjson": "jsonl",
         ".yaml": "yaml",
         ".yml": "yaml",
         ".toml": "toml",
@@ -38,9 +46,22 @@ def analyze_text(raw: bytes, extension: str, index: RegionIndex) -> Analysis:
         ".svg": "xml",
         ".csv": "csv",
         ".tsv": "tsv",
+        ".c": "c",
+        ".h": "c",
+        ".css": "css",
+        ".html": "html",
+        ".htm": "html",
+        ".js": "javascript",
+        ".mjs": "javascript",
+        ".cjs": "javascript",
+        ".jsx": "javascript",
+        ".ts": "typescript",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".tsx": "tsx",
     }.get(extension, "text")
-    result = Analysis(format_name, "text", index)
     lines = physical_lines(text)
+    result = Analysis(format_name, "text", index, lines=lines)
     crlf = text.count("\r\n")
     newlines = {
         "crlf": crlf,
@@ -63,12 +84,22 @@ def analyze_text(raw: bytes, extension: str, index: RegionIndex) -> Analysis:
             markdown_navigation(text, index)
         elif format_name in {"json", "yaml"}:
             analyze_mapping(text, result)
-        elif format_name == "toml":
-            analyze_toml(text, result)
+        elif format_name == "jsonl":
+            analyze_json_lines(lines, result)
         elif format_name == "xml":
             analyze_xml(text, result)
         elif format_name in {"csv", "tsv"}:
             analyze_table(text, result)
+        elif format_name in {
+            "c",
+            "css",
+            "html",
+            "javascript",
+            "toml",
+            "typescript",
+            "tsx",
+        }:
+            analyze_syntax(text, result)
     except (ValueError, SyntaxError, csv.Error, yaml.YAMLError, ExpatError) as error:
         result.status = "invalid_format"
         result.warnings.append(
@@ -82,6 +113,4 @@ def analyze_text(raw: bytes, extension: str, index: RegionIndex) -> Analysis:
     except RecursionError:
         result.status = "skipped_limit"
         result.warnings.append(FILE_INSPECTION_TEXT.parser_depth_warning)
-    if index.is_empty() and lines:
-        index.add("content", FILE_INSPECTION_TEXT.content_region_label, 1, len(lines))
     return result

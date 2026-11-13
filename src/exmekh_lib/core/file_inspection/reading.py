@@ -88,12 +88,12 @@ def read_file(
     work_root: Path, path: str, start_index: int, end_index: int
 ) -> dict[str, object]:
     validate_file_path(path)
-    is_pdf = Path(path).suffix.casefold() == ".pdf"
-    if Path(path).suffix.casefold() in FILE_INSPECTION.image_extensions:
+    extension = Path(path).suffix.casefold()
+    if extension in FILE_INSPECTION.image_extensions:
         return read_image(
             read_snapshot(work_root, path, FILE_INSPECTION), FILE_INSPECTION
         )
-    if is_pdf:
+    if extension == ".pdf":
         validate_pdf_read_arguments(start_index, end_index, FILE_INSPECTION)
     else:
         validate_read_arguments(path, start_index, end_index)
@@ -106,32 +106,23 @@ def read_file(
         snapshot = read_snapshot(work_root, path, FILE_INSPECTION)
     except FileInspectionError:
         return require_inspection(path)
-    inspection = _find_matching_inspection(work_root, snapshot, evidence)
+    inspection = _find_matching_inspection(snapshot, evidence)
     if inspection is None:
         return require_inspection(path)
-    if is_pdf:
+    if inspection.format == "pdf":
         return read_pdf(snapshot, start_index, end_index, FILE_INSPECTION)
     return _read_line_range(snapshot, inspection, start_index, end_index)
 
 
 def _find_matching_inspection(
-    work_root: Path, snapshot: FileSnapshot, evidence: tuple[InspectionEvidence, ...]
+    snapshot: FileSnapshot, evidence: tuple[InspectionEvidence, ...]
 ) -> InspectionEvidence | None:
     if snapshot.content is None:
         return None
     digest = hash_content(snapshot.content)
-    for inspection in evidence:
-        try:
-            current = read_snapshot(work_root, str(inspection.path), FILE_INSPECTION)
-        except FileInspectionError:
-            continue
-        if (
-            current.content is not None
-            and hash_content(current.content) == inspection.digest == digest
-            and current.path == snapshot.path
-        ):
-            return inspection
-    return None
+    return next(
+        (item for item in evidence if item.matches(snapshot.path, digest)), None
+    )
 
 
 def _read_line_range(

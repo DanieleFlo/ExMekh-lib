@@ -3,7 +3,6 @@
 import csv
 import tarfile
 import zipfile
-from dataclasses import asdict
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -14,13 +13,17 @@ from exmekh_lib.config.file_inspection import (
     FILE_INSPECTION_TEXT,
     FileInspectionSettings,
 )
+from exmekh_lib.config.tool_output import ToolOutputSettings
 from exmekh_lib.core.tokenizers.text_budget import TokenTextBudget
 from exmekh_lib.interfaces.tokenizer import Tokenizer
 
 from .containers import analyze_image, analyze_tar, analyze_zip
+from .errors import FileInspectionError
 from .evidence import InspectionReport
 from .models import Analysis, RegionIndex, RegionPage
 from .pdf import analyze_pdf
+from .read_plan import ReadPlan, build_read_plan
+from .reporting import InspectionPresentation
 from .selection import validate_selection
 from .text import analyze_text
 from .workspace import FileSnapshot, read_snapshot
@@ -32,41 +35,73 @@ def inspect_file(
     *,
     tokenizer: Tokenizer,
     detailed: bool = False,
-    max_items: int = FILE_INSPECTION.default_max_items,
+    max_items: int | None = None,
     offset: int = 0,
     query: str | None = None,
+    read_from_line: int | None = None,
     settings: FileInspectionSettings = FILE_INSPECTION,
+    output_settings: ToolOutputSettings | None = None,
 ) -> dict[str, object]:
-    validate_selection(detailed, max_items, offset, query, settings)
+    if max_items is None:
+        max_items = settings.default_max_items
+    validate_selection(detailed, max_items, offset, query, read_from_line, settings)
     snapshot = read_snapshot(work_root, path, settings)
     analysis = _analyze(snapshot, settings, tokenizer)
+    if detailed and analysis.index.is_empty() and analysis.lines:
+        analysis.index.add(
+            "content", FILE_INSPECTION_TEXT.content_region_label, 1, len(analysis.lines)
+        )
     page = analysis.index.select(max_items=max_items, offset=offset, query=query)
-    report = _build_report(snapshot, analysis, page, detailed)
+    output_limit = (output_settings or ToolOutputSettings.from_environment()).max_tokens
+    read_plan = _plan_reads(
+        analysis, page, read_from_line, TokenTextBudget(tokenizer, output_limit)
+    )
+    report_budget = TokenTextBudget(
+        tokenizer,
+        output_limit if detailed else min(output_limit, settings.max_report_tokens),
+    )
+    report = InspectionPresentation(snapshot, analysis, detailed, report_budget).fit(
+        page, read_plan
+    )
     if snapshot.content is not None:
         return InspectionReport(report, snapshot)
     return report
 
 
-def _build_report(
-    snapshot: FileSnapshot, analysis: Analysis, page: RegionPage, detailed: bool
-) -> dict[str, object]:
-    result: dict[str, object] = {
-        "ok": True,
-        "path": snapshot.relative_path,
-        "format": analysis.format,
-        "family": analysis.family,
-        "size_bytes": snapshot.stat.st_size,
-        "analysis_status": analysis.status,
-        "analysis": analysis.details,
-        **page.to_dict(),
-        "warnings": analysis.warnings,
-    }
-    if "total_lines" in analysis.details:
-        result["total_lines"] = analysis.details["total_lines"]
-    if detailed:
-        result["metadata"] = snapshot.metadata()
-        result["limits"] = asdict(analysis.index.settings)
-    return result
+def _plan_reads(
+    analysis: Analysis,
+    page: RegionPage,
+    start_line: int | None,
+    budget: TokenTextBudget,
+) -> ReadPlan | None:
+    lines = analysis.lines
+    if lines is None or analysis.status != "complete":
+        return None
+    end_line = len(lines)
+    if start_line is not None and start_line > max(1, end_line):
+        raise FileInspectionError(
+            FILE_INSPECTION_TEXT.read_from_line_outside_file.format(
+                total_lines=end_line
+            ),
+            code="invalid_input",
+        )
+    match = page.first_match()
+    if (
+        match is not None
+        and match.start_line is not None
+        and match.end_line is not None
+    ):
+        if start_line is None or match.start_line <= start_line <= match.end_line:
+            start_line = start_line or match.start_line
+            end_line = match.end_line
+    return build_read_plan(
+        lines,
+        analysis.index.line_boundaries(),
+        start_line or 1,
+        end_line,
+        analysis.index.settings.read_ranges_per_page,
+        budget,
+    )
 
 
 def _analyze(

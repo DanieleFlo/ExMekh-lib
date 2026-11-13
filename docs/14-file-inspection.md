@@ -25,10 +25,11 @@ Model arguments:
 | Argument | Default | Meaning |
 | --- | --- | --- |
 | `path` | required | Relative or absolute file path inside the workroot |
-| `detailed` | `false` | Include filesystem metadata and configured limits |
-| `max_items` | `50` | Regions per page, from 1 to 500 |
+| `detailed` | `false` | Include filesystem metadata, text statistics and configured limits |
+| `max_items` | `12` | Maximum regions per page, from 1 to 500. The report token budget can reduce the page |
 | `offset` | `0` | Zero-based offset in the selected navigation index |
 | `query` | `null` | Rank the bounded index by lexical overlap with names/kinds |
+| `read_from_line` | `null` | Start the text read plan at this 1-based physical line |
 
 Examples of provider tool-call arguments (the provider protocol remains JSON):
 
@@ -50,20 +51,31 @@ the harness stores tool outputs according to its existing cache policy.
 | Format | Result |
 | --- | --- |
 | Python / stubs | AST class and function index, qualified nested names, ranges including decorators; coding cookies supported; code is never executed |
+| JavaScript / JSX (`.js`, `.mjs`, `.cjs`, `.jsx`) | Imports, functions including assigned arrows, classes and methods |
+| TypeScript / TSX (`.ts`, `.mts`, `.cts`, `.tsx`) | JavaScript regions plus interfaces, type aliases, enums and namespaces |
+| C (`.c`, `.h`) | Includes, macros, function definitions and prototypes, typedefs and named struct/union/enum definitions |
+| HTML (`.html`, `.htm`) | Headings, landmarks, elements with IDs and script/style blocks |
+| CSS | Selectors and at-rules, including nested rules |
 | Markdown | Nested section ranges, ATX/Setext headings, backtick/tilde fences; headings inside fences ignored |
 | JSON / YAML | Key paths and inclusive physical line ranges, node counts; values omitted; aliases bounded and cycles reported |
-| TOML | Parsed key paths; line ranges omitted because the parser does not provide them |
+| JSON Lines (`.jsonl`, `.ndjson`) | Physical record lines searchable by top-level keys, record counts and malformed record locations. Blank lines are skipped and values are omitted |
+| TOML | Tables and key paths with source line ranges |
 | XML / SVG | Element names and line ranges; document types and entities rejected |
 | CSV / TSV | Record/column counts, inconsistent widths, delimiter and heuristic header detection; navigation groups 100 records and respects multiline fields |
 | ZIP / Office OOXML containers | Member names, counts, declared expanded size, encryption and unsafe-path indicators; no extraction or workbook/document interpretation |
 | TAR, gzip/bzip2/xz TAR | Bounded member scan; explicitly partial totals when a budget stops the scan |
 | PDF | Page count, encryption, document properties and first-page dimensions in points; no text extraction, rendering or OCR |
 | Raster images | Format, dimensions, color mode and animation indicator from headers; no pixel payload, OCR or EXIF export |
-| Other Unicode text | Encoding, physical line count, non-empty lines, maximum line length, newline style and whole-file navigation region |
+| Other Unicode text | Encoding, physical line count and token-sized reads. Detailed reports add text statistics and the whole-file region |
 
 UTF-8 and BOM-marked UTF-16/UTF-32 are supported. Unknown binary/non-Unicode
 files return an explicit unsupported status. Other source languages receive
-generic text analysis. PDF metadata uses the declared `pypdf` dependency;
+generic text analysis. The bundled Tree-sitter grammars parse source locally.
+When a grammar recovers from a syntax error, `syntax_recovered` and a warning
+flag the potentially incomplete index while physical lines remain readable.
+JSON Lines also keeps physical lines readable when individual records fail to
+parse. Its counts reflect the scanned prefix if a resource limit stops analysis.
+PDF metadata uses the declared `pypdf` dependency;
 encrypted PDFs report encryption and unavailable properties without requesting
 passwords or attempting decryption.
 
@@ -73,13 +85,43 @@ separators do not. Structured parser positions are translated to these same
 physical lines, including JSON/YAML strings with Unicode separators. Non-text
 files do not claim a physical line count.
 
-`query` ranks the complete *bounded* index before pagination. It tokenizes
-complete camelCase/snake_case names and sorts by shared query terms, keeping the
-original order for ties. It does not filter out nonmatches or download semantic models.
+`query` searches the complete bounded index before pagination. It prefers exact
+names and returns full-term matches when available, with partial matches as a
+fallback. Ties keep document order. A query with no matches returns an empty
+region list. Names are tokenized across camelCase and snake_case boundaries.
 Display labels can be truncated without removing terms from the search index.
 The region budget retains regions in document discovery order before ranking
 and pagination. An `offset` applies to that ranked index; keep the same query
-when paging.
+when paging. `selection.matching_items` counts the matching regions before paging.
+Use the returned `next_offset`, since the number of items can vary by page.
+
+Compact reports target 1,600 tokens or the configured output limit, whichever
+is lower. The tool counts the rendered XML and reduces the region page as
+needed. A tight budget can omit empty fields, default values and redundant
+metadata. Read coordinates, warnings and continuation fields are kept. Very
+small limits can require exporting the report if its basic fields still exceed
+the budget.
+
+### Token-sized text reads
+
+`read_plan` shows up to five consecutive `ranges` per inspection by default.
+When the report budget is tight, it keeps the first range and a continuation line.
+Each gives `start_index`, `end_index` and `tokens`. The plan prefers nearby
+boundaries from the indexed sections and symbols. It starts at the first
+matching region on the current query page when it has a line range, and stops at
+that region's end. Without a match it starts at line 1 by default. Pass
+`next_line` as `read_from_line` with the same query and offset to continue, or
+pass a region's `start_line` to plan reads from that location. The region index
+still uses `offset` and `max_items`.
+
+`max_tokens` comes from the node's tool-output settings, configured by
+`EXMEKH_LIB_TOOL_OUTPUT_MAX_TOKENS` (5000 by default). The plan counts the same
+selected text as `read-file`, with LF between physical lines, using the node's
+model tokenizer. XML markup and line numbers are outside this budget. Each
+suggestion fits the limit for unchanged content, except a single line that
+exceeds it, marked `over_limit`. The plan suggests `0/0` for empty text and is
+available after complete text analysis. Direct Python callers can pass
+`output_settings=ToolOutputSettings(...)`.
 
 ## Status and resource limits
 

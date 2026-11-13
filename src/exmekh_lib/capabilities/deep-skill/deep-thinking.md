@@ -28,8 +28,8 @@ seek counterexamples and distinguish observations from inference; hand off findi
 
 <if-tool name="read-file" scope="direct">
 Use `inspect-file` to identify relevant regions of local evidence, then `read-file`
-for the required line or PDF page ranges. File inspection and reading use the
-workspace boundary and prerequisites as other file operations.
+for the required line or PDF page ranges. For text, `read_plan` shows ranges sized
+for the current read limit. Pass `next_line` as `read_from_line` to continue.
 
 </if-tool>
 <if-tool name="search-web" scope="direct">

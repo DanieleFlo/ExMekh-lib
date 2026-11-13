@@ -19,6 +19,7 @@ from exmekh_lib.core.models.external_tool_output import (
 from exmekh_lib.core.models.tool import PreformattedToolResult
 from exmekh_lib.core.models.tool_output_presentation import ToolOutputPresentation
 from exmekh_lib.core.models.xml_header import XmlHeader
+from exmekh_lib.core.tokenizers.text_budget import TokenTextBudget
 from exmekh_lib.interfaces.tokenizer import Tokenizer
 from exmekh_lib.utils.tool_errors import error_diagnostic
 from exmekh_lib.utils.xml import stringify_tool_result
@@ -54,6 +55,7 @@ class ToolOutputPreparer:
         self._tokenizer = tokenizer
         self.files = files
         self.settings = files.settings
+        self._budget = TokenTextBudget(tokenizer, self.settings.max_tokens)
 
     def prepare(
         self,
@@ -68,9 +70,9 @@ class ToolOutputPreparer:
     def shorten(self, output: ToolOutputPresentation) -> PreparedToolOutput:
         """Use a file reference only if it reduces the displayed token cost."""
         prepared = self.externalize(output)
-        if prepared.failure is not None or self._count(prepared.content) < self._count(
-            output.result.content
-        ):
+        if prepared.failure is not None or self._budget.count(
+            prepared.content
+        ) < self._budget.count(output.result.content):
             return prepared
         return PreparedToolOutput(output.result.content, output.result.external_output)
 
@@ -84,7 +86,7 @@ class ToolOutputPreparer:
             )
         text = output.body
         try:
-            count = self._count(
+            count = self._budget.count(
                 text if output.budget_text is None else output.budget_text
             )
             if count <= inline_limit:
@@ -114,7 +116,7 @@ class ToolOutputPreparer:
 
     def _export(self, text: str, output_id: str) -> ExternalToolOutput:
         parts = self._parts(text)
-        counts = tuple(self._count(part) for part in parts)
+        counts = tuple(self._budget.count(part) for part in parts)
         digest = sha256()
         for component in (output_id, str(self.settings.max_tokens), text):
             digest.update(
@@ -133,17 +135,11 @@ class ToolOutputPreparer:
             for path, tokens, part in zip(paths, counts, parts, strict=True)
         )
         return ExternalToolOutput(
-            self._count(text),
+            self._budget.count(text),
             SourceLines(text).physical_count,
             self.settings.max_tokens,
             files,
         )
-
-    def _count(self, text: str) -> int:
-        count = self._tokenizer.count_tokens(text)
-        if type(count) is not int or count < 0:
-            raise ValueError(TOOL_OUTPUT_TEXT.invalid_token_count)
-        return count
 
     def _parts(self, text: str) -> tuple[str, ...]:
         if SourceLines(text).physical_count != 1:
@@ -152,10 +148,7 @@ class ToolOutputPreparer:
         if (
             not parts
             or "".join(parts) != text
-            or any(
-                not part or self._count(part) > self.settings.max_tokens
-                for part in parts
-            )
+            or any(not part or not self._budget.fits(part) for part in parts)
         ):
             raise ValueError(TOOL_OUTPUT_TEXT.invalid_prefix)
         return parts

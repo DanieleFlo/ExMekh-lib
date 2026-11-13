@@ -2,6 +2,7 @@
 
 import re
 from bisect import bisect_right
+from collections.abc import Iterable
 
 from exmekh_lib.config.file_inspection import FILE_INSPECTION_TEXT
 
@@ -44,3 +45,8 @@ def physical_lines(text: str) -> list[str]:
     if not lines[-1]:
         lines.pop()
     return lines
+
+
+def selected_line_text(lines: Iterable[str]) -> str:
+    """Join a text read's physical lines for output budgeting."""
+    return "\n".join(lines)

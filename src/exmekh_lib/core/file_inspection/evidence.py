@@ -5,6 +5,7 @@ from pathlib import Path
 
 from exmekh_lib.utils.xml import stringify_tool_result
 
+from .lines import selected_line_text
 from .workspace import FileSnapshot
 
 
@@ -23,6 +24,10 @@ class InspectionEvidence:
     readable: bool
     successful: bool
     source: str = "inspect"
+    format: str = ""
+
+    def matches(self, path: Path, digest: bytes) -> bool:
+        return self.successful and self.path == path and self.digest == digest
 
 
 class InspectionReport(dict[str, object]):
@@ -37,6 +42,7 @@ class InspectionReport(dict[str, object]):
             stringify_tool_result(report),
             report.get("family") == "text",
             report.get("analysis_status") in {"complete", "unsupported"},
+            format=str(report.get("format", "")),
         )
 
     @property
@@ -61,4 +67,4 @@ class ReadReport(InspectionReport):
             for item in lines
         ):
             return None
-        return "\n".join(item["text"] for item in lines)
+        return selected_line_text(item["text"] for item in lines)

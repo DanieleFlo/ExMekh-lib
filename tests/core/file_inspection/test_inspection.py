@@ -63,7 +63,7 @@ def inspect_text(tmp_path, text, filename="sample.txt", **kwargs):
     ],
 )
 def test_physical_lines_and_newline_style(tmp_path, text, lines, style):
-    result = inspect_text(tmp_path, text)
+    result = inspect_text(tmp_path, text, detailed=True)
     assert result["total_lines"] == lines
     assert result["analysis"]["newline_style"] == style
     assert result["regions"] == (
@@ -175,13 +175,10 @@ def test_structured_navigation_omits_values(tmp_path, filename, text, names):
     assert result["analysis_status"] == "complete"
     assert [r["name"] for r in result["regions"]] == names
     assert "secret-value" not in repr(result)
-    if filename.endswith(".toml"):
-        assert all("start_line" not in r for r in result["regions"])
-    else:
-        assert all(
-            1 <= r["start_line"] <= r["end_line"] <= result["total_lines"]
-            for r in result["regions"]
-        )
+    assert all(
+        1 <= r["start_line"] <= r["end_line"] <= result["total_lines"]
+        for r in result["regions"]
+    )
 
 
 def test_json_key_ranges_are_inclusive(tmp_path):
@@ -260,7 +257,9 @@ def test_tsv_and_complete_record_chunks(tmp_path):
         tmp_path,
         "a\tb\n1\t2\n3\t4\n5\t6\n",
         "data.tsv",
-        settings=replace(FILE_INSPECTION, table_rows_per_region=2),
+        settings=replace(
+            FILE_INSPECTION, table_rows_per_region=2, max_report_tokens=5000
+        ),
     )
     assert result["analysis"]["delimiter"] == "\t"
     assert [
@@ -279,9 +278,32 @@ def test_pagination_and_query_search_the_index_before_slicing(tmp_path):
     ranked = inspect_file(tmp_path, "notes.md", max_items=1, query="user message")
     assert ranked["regions"][0]["name"] == "DecodeUserMessage"
     assert ranked["selection"]["ranking"] == "lexical"
+    assert ranked["selection"]["matching_items"] == 1
+    assert ranked["read_plan"]["ranges"][0]["start_index"] == 3
+    unmatched = inspect_file(tmp_path, "notes.md", query="missing")
+    assert unmatched["selection"]["matching_items"] == 0
+    assert unmatched["regions"] == []
+    assert unmatched["read_plan"]["ranges"][0]["start_index"] == 1
+    resumed = inspect_file(tmp_path, "notes.md", query="user", read_from_line=2)
+    assert resumed["read_plan"]["ranges"][0]["start_index"] == 2
+    with pytest.raises(FileInspectionError, match="3 physical lines"):
+        inspect_file(tmp_path, "notes.md", read_from_line=4)
     empty = inspect_file(tmp_path, "notes.md", offset=100)
     assert empty["regions"] == []
     assert empty["selection"]["has_more"] is False
+
+
+def test_default_page_size_comes_from_supplied_settings(tmp_path):
+    result = inspect_text(
+        tmp_path,
+        "# First\n# Second\n",
+        "notes.md",
+        settings=replace(
+            FILE_INSPECTION, default_max_items=1, max_items=1, max_report_tokens=5000
+        ),
+    )
+    assert [region["name"] for region in result["regions"]] == ["First"]
+    assert result["selection"]["next_offset"] == 1
 
 
 def test_index_limit_differs_from_pagination_and_labels_are_bounded(tmp_path):
@@ -308,6 +330,9 @@ def test_index_limit_differs_from_pagination_and_labels_are_bounded(tmp_path):
         {"offset": -1},
         {"offset": True},
         {"offset": "1"},
+        {"read_from_line": 0},
+        {"read_from_line": True},
+        {"read_from_line": "2"},
         {"detailed": 1},
         {"query": ""},
         {"query": "   "},
@@ -501,6 +526,7 @@ def test_bundled_tool_schema_and_structured_errors(bundled_tool):
         "max_items",
         "offset",
         "query",
+        "read_from_line",
         "execution_mode",
         "wait_seconds",
     }

@@ -189,9 +189,14 @@ def test_file_tools_can_read_exact_budget_chunk_without_recursive_export(
     ).external_output
     path = reference.files[0].path
     with output_file_access(preparer.files):
-        inspection = inspect_file(tmp_path, path, max_items=1)
+        inspection = inspect_file(
+            tmp_path, path, max_items=1, output_settings=preparer.settings
+        )
+        plan = inspection["read_plan"]
+        assert plan["ranges"] == [{"start_index": 1, "end_index": 1, "tokens": 10}]
+        span = plan["ranges"][0]
         with file_read_context((inspection.evidence,)):
-            read = read_file(tmp_path, path, 1, 1)
+            read = read_file(tmp_path, path, span["start_index"], span["end_index"])
     assert read.selected_text() == "abcdefghij"
     result = preparer.prepare(
         ToolOutputPresentation(

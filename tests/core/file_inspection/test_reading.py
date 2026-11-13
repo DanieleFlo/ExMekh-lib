@@ -196,6 +196,23 @@ def test_missing_prerequisite_does_not_read_or_decode(tmp_path, monkeypatch):
     )
 
 
+def test_read_checks_only_the_requested_snapshot(tmp_path, text_file, monkeypatch):
+    (tmp_path / "other.txt").write_text("one\ntwo\nthree\n")
+    other = inspect_file(tmp_path, "other.txt")
+    target = inspect_file(tmp_path, text_file.name)
+    read_snapshot = reading.read_snapshot
+    opened = []
+
+    def record_snapshot(work_root, path, settings):
+        opened.append(path)
+        return read_snapshot(work_root, path, settings)
+
+    monkeypatch.setattr(reading, "read_snapshot", record_snapshot)
+    with file_read_context((other.evidence, target.evidence)):
+        assert read_file(tmp_path, text_file.name, 1, 1).selected_text() == "one"
+    assert opened == [text_file.name]
+
+
 def test_read_schema_requires_all_indices_and_describes_prerequisite(tmp_path):
     loaded = Capabilities(None, default_capabilities=DefaultCapabilities()).load(
         work_root=tmp_path

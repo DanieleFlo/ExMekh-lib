@@ -3,7 +3,6 @@
 import csv
 import io
 import json
-import tomllib
 from collections import Counter
 from dataclasses import replace
 from xml.parsers import expat
@@ -69,27 +68,28 @@ def analyze_mapping(text: str, result: Analysis) -> None:
     )
 
 
-def analyze_toml(text: str, result: Analysis) -> None:
-    value = tomllib.loads(text)
-    # tomllib has no source marks; do not invent line ranges for TOML keys.
-    pending: list[tuple[str, object, int, bool]] = [("", value, 0, False)]
-    while pending:
-        name, item, depth, is_key = pending.pop()
-        if depth > result.index.settings.max_structure_depth:
-            result.index.mark_truncated()
+def analyze_json_lines(lines: list[str], result: Analysis) -> None:
+    records = invalid = 0
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
             continue
-        if is_key:
-            result.index.add("key", name)
-        if isinstance(item, dict):
-            for key, child in reversed(list(item.items())):
-                label = f"{name}.{key}" if name else key
-                pending.append((label, child, depth + 1, True))
-        elif isinstance(item, list):
-            pending.extend(
-                (f"{name}[{i}]", child, depth + 1, False)
-                for i, child in reversed(list(enumerate(item)))
-            )
-    result.details["root_kind"] = "mapping"
+        if records == result.index.settings.max_structure_nodes:
+            result.index.mark_truncated()
+            break
+        records += 1
+        try:
+            value = json.loads(line)
+        except (ValueError, RecursionError):
+            invalid += 1
+            result.index.add("invalid_record", f"record {records}", number, number)
+            continue
+        name = f"record {records}"
+        if isinstance(value, dict) and value:
+            name += " · " + ", ".join(value)
+        result.index.add("record", name, number, number)
+    result.details.update(records_scanned=records, invalid_records=invalid)
+    if invalid:
+        result.warnings.append(FILE_INSPECTION_TEXT.invalid_json_lines_warning)
 
 
 def analyze_xml(text: str, result: Analysis) -> None:

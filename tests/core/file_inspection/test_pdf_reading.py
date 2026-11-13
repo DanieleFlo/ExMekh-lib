@@ -152,6 +152,18 @@ def test_pdf_changes_invalidate_inspection_without_rendering(tmp_path, monkeypat
         )
 
 
+def test_read_uses_the_inspected_pdf_format_without_a_pdf_extension(tmp_path):
+    path = write_pdf(tmp_path / "report.dat", count=2)
+    report = inspect_file(tmp_path, path.name)
+    assert report["format"] == "pdf"
+
+    with file_read_context((report.evidence,)):
+        result = read_file(tmp_path, path.name, 2, 2)
+
+    assert result["format"] == "pdf"
+    assert result["total_pages"] == 2
+
+
 def test_pdf_page_range_must_fit_the_actual_document(tmp_path):
     path = write_pdf(tmp_path / "report.pdf", count=2)
     with pytest.raises(FileInspectionError, match=r"outside.*1\.\.2"):

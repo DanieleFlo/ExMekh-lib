@@ -15,6 +15,7 @@ def validate_selection(
     max_items: int,
     offset: int,
     query: str | None,
+    read_from_line: int | None,
     settings: FileInspectionSettings,
 ) -> None:
     if not isinstance(detailed, bool):
@@ -34,6 +35,12 @@ def validate_selection(
         raise FileInspectionError(
             FILE_INSPECTION_TEXT.offset_nonnegative, code="invalid_input"
         )
+    if read_from_line is not None and (
+        type(read_from_line) is not int or read_from_line < 1
+    ):
+        raise FileInspectionError(
+            FILE_INSPECTION_TEXT.read_from_line_positive, code="invalid_input"
+        )
     if query is not None and (
         not isinstance(query, str)
         or len(query) > settings.max_query_chars
@@ -48,6 +55,11 @@ def validate_selection(
 
 
 def query_terms(value: str) -> set[str]:
+    return set(navigation_words(value))
+
+
+def navigation_words(value: str) -> tuple[str, ...]:
     # Split camelCase and snake_case identifiers into searchable words.
-    expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", value).replace("_", " ")
-    return set(re.findall(r"[^\W_]+", expanded.casefold()))
+    expanded = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", value)
+    expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", expanded).replace("_", " ")
+    return tuple(re.findall(r"[^\W_]+", expanded.casefold()))

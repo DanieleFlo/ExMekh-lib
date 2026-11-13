@@ -9,9 +9,11 @@ from exmekh_lib.config.default_capabilities import DEFAULT_CAPABILITIES
 class FileInspectionSettings:
     max_file_bytes: int = 8 * 1024 * 1024
     max_regions: int = 10_000
-    default_max_items: int = 50
+    default_max_items: int = 12
     max_items: int = 500
     max_label_tokens: int = 200
+    read_ranges_per_page: int = 5
+    max_report_tokens: int = 1600
     max_query_chars: int = 1_000
     max_structure_nodes: int = 100_000
     max_pdf_pages: int = 2_000
@@ -130,6 +132,10 @@ class FileInspectionText:
     detailed_boolean: str = "detailed must be a boolean."
     max_items_range: str = "max_items must be an integer between 1 and {max_items}."
     offset_nonnegative: str = "offset must be a nonnegative integer."
+    read_from_line_positive: str = "read_from_line must be a positive integer."
+    read_from_line_outside_file: str = (
+        "read_from_line is outside the file ({total_lines} physical lines)."
+    )
     query_required: str = (
         "query must contain searchable words and at most {max_query_chars} characters."
     )
@@ -151,6 +157,8 @@ class FileInspectionText:
         "No text analyzer is available for this binary or non-Unicode file."
     )
     parser_depth_warning: str = "Parser nesting limit exceeded."
+    recovered_syntax_warning: str = "The parser recovered from syntax errors; some navigation regions may be missing."
+    invalid_json_lines_warning: str = "Some JSON Lines records could not be parsed; their physical lines are still readable."
     encrypted_pdf_warning: str = (
         "Encrypted PDF: page count and document properties are unavailable."
     )
@@ -172,7 +180,8 @@ class FileInspectionText:
         return (
             "Inspect a workroot file: metadata, text line count and bounded navigation ranges "
             "(1-based, inclusive), not full content. PDF/image metadata and archive indexes only; "
-            "no OCR/extraction. query filters/ranks; offset/max_items paginate "
+            "no OCR/extraction. Text read_plan shows token-sized reads; read_from_line resumes it. "
+            "query finds matching regions; offset/max_items paginate "
             f"(default {FILE_INSPECTION.default_max_items}); detailed adds technical limits. Check truncation/warnings."
         )
 

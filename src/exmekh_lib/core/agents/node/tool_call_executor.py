@@ -312,7 +312,12 @@ class ToolCallExecutor:
 
     def _tool_run_context(self) -> AbstractContextManager[FileReadContext]:
         # Capture dependencies now; enter their contexts in the execution thread.
-        tokenizer_context = inspection_tokenizer_context(self._client.get_tokenizer())
+        tokenizer_context = inspection_tokenizer_context(
+            self._client.get_tokenizer(),
+            self._output_preparer.settings
+            if self._output_preparer is not None
+            else None,
+        )
         output_context = output_file_access(
             self._output_preparer.files if self._output_preparer is not None else None
         )

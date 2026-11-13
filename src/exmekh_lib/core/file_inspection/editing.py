@@ -94,22 +94,13 @@ def require_edit_evidence(
     digest = hash_content(content)
     inspected = False
     for item in evidence:
-        if (
-            item.path == target
-            and item.digest == digest
-            and item.source == "inspect"
-            and item.successful
-            and not item.readable
-        ):
+        if not item.matches(target, digest):
+            continue
+        if item.source == "inspect" and not item.readable:
             raise FileInspectionError(
                 FILE_EDITING.noneditable_inspection, code="unsupported_file_format"
             )
-        if (
-            item.path != target
-            or item.digest != digest
-            or not item.successful
-            or not item.readable
-        ):
+        if not item.readable:
             continue
         if item.source == "inspect":
             inspected = True

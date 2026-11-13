@@ -38,7 +38,6 @@ class ToolOutputSettings:
 @dataclass(frozen=True, slots=True)
 class ToolOutputText:
     export_failed_log: str = "Tool output export failed"
-    invalid_token_count: str = "Tokenizer returned an invalid token count"
     exported: str = (
         "The output exceeded {limit} tokens and was written to temporary text files. "
         "Inspect and read the listed files in order with the file tools. "
